@@ -1,1 +1,107 @@
+iOS多线程学习
+引言 ｜ 学习过一遍GCD，但是平时基本不用，都差不多忘记了，再此拾起来，自己组织语言、加以学习后的理解记录了这篇文档。
+概念：
+- 1、进程/线程
+一个任务就是一个进程，一个浏览器是一个任务，开一个word也是一个任务。每个任务中又可以同时执行多个子任务，比如word 可以一边打字，一边检查拼写错误，每个子任务就是一个线程。所以一个进程可以包括多个线程，且至少包括一个线程。多进程的优点是一个进程崩溃不会影响其他进程，但一个线程崩溃，则整个进程都不能运行；多线程的优点是开销小，通信灵活，只需修改同一个变量就可以达到。
+- 2、串行/并发/并行
+串行就是一个CPU一个任务执行完再执行下一个任务；并发是一个CPU多个任务同时执行；并行是多个CPU同时执行多个任务。
+- 3、同步/异步
+同步是必须等任务执行完才会继续进行下一步，异步是无需等待任务执行完，而是让任务执行完主动汇报。
+- 4、阻塞/非阻塞
+阻塞任务是不执行成功就不会回调，非阻塞任务是无论是否成功都会回调。
+随意六连问：
+并发系统一定是多线程的么？
+异步系统一定是多线程的么？
+使用多线程的系统一定是并发系统么？
+使用多线程的系统一定是异步系统么？
+并发系统一定存在并行么？
+使用多线程一定存在并行么？
+iOS 实现一个多线程的例子 （线程管理）
+NSThread
+
+保护线程安全
+如果多个线程访问同一资源，不论如何进行线程交替执行，不需要我们去做任何同步的操作，都能得到我们设想的结果，才是线程安全的。
+竞争和原子操作、同步和锁、可重入、过度优化
+1、互斥锁
+线程要使用公共资源，必须先获取锁。通过对资源进行加锁、解锁，可以同一时间保证只有一个线程在操作资源。这种方式可能会造成死锁：1、两次调用加锁，自己等自己 2、常见的互相等待
+pthread_mutex    NSLock 是对pthread_mutex 的面向对象的封装
+2、信号量机制
+dispatch_semaphore
+如果互斥锁是BOOL 型，那信号量就是Unsigned int 型，允许多个线程共同执行。如果是二元的信号量，就和互斥锁的功能一样了。
+3、条件变量
+NSCondition
+条件变量总是习惯和一个互斥锁配合使用，用在这样的场景中：不满足条件时阻塞线程，直到某一刻满足了条件，发送信号唤醒阻塞的线程。
+4、@synchonized   一种递归锁 
+递归锁也就是可重入锁，同一个线程可以重复获取递归锁，不会死锁; 同一个线程重复获取非递归锁，则会产生死锁。递归锁内部维护Lock次数，来实现可重入。只有当次数为0时，才是真正的加锁或解锁。
+5、自旋锁
+OSSpinLock (已经废弃)线程反复检查锁变量是否可用。它的问题在于优先级反转。iOS10以上已经废弃了。
+GCD
+iOS 中多线程的使用
+
+GCD 的封装还是比较“严实”的，重点的应用就是给了两种任务队列：串行队列和并发队列，向队列末尾加入新的任务，每次执行任务则是从队首取。两种执行方式：同步和异步。由此排列组合。如果将任务比做箱子，队列可以比做传送箱子的传送带通道，线程可以比做是包装箱子的工人。串行队列是所有的箱子都只在一个传送带上传输；而并行队列则是箱子通过多个传送带在传送。同步是只有一个工人在包装，异步就是多个工人同时在包装箱子。
+串行队列中比较特殊的一个就是主队列，提交到主队列的任务要在主线程执行。
+
+    NSLog(@"1");
+    dispatch_sync(dispatch_get_global_queue(0, 0), ^{
+        NSLog(@"2");
+        dispatch_sync(dispatch_get_global_queue(0, 0), ^{
+            NSLog(@"3");
+        });
+        NSLog(@"5");
+    });
+    NSLog(@"4");
+原文链接：https://blog.csdn.net/a690993211/article/details/113988374
+
+打印顺序：12354   因为是同步执行，也就是只有一个工人，只能等任务执行结束后才能执行后面的任务。
+NSLog(@"1");
+dispatch_async(dispatch_get_global_queue(0, 0), ^{
+    NSLog(@"2");
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        NSLog(@"3");
+    });
+    NSLog(@"5");
+});
+NSLog(@"4");
+
+打印顺序：14253    异步执行的任务加到队列末尾后就继续执行后边的任务了，所以是4先打印再执行异步block 中的任务。
+    dispatch_queue_t queue = dispatch_get_global_queue(0, 0);
+    NSLog(@"1");
+    dispatch_sync(dispatch_get_main_queue, ^{
+        NSLog(@"2");
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSLog(@"3");
+        });
+        NSLog(@"5");
+    });
+    NSLog(@"4");
+
+死锁   
+但是放到非主队列的串行队列就不会死锁。
+
+GCD的高级api：
+dispatch_barrier_sync  
+dispatch_barrier_async
+
+
+
+dispatch_after
+
+
+dispatch_semaphore
+可以控制并发数量，创建的时候可以设置最大允许的并发线程数量
+dispatch_semaphore_t  semaphore = dispatch_semephore_create(value);
+这个value 不可以小于0 ，否则semaphore将被赋值为null
+dispatch_semaphore_wait(semaphore, dispatch_time_t timeout);  （P操作）
+dispatch_semaphore_signal(semaphore);  (V操作)
+信号量是PV 操作的载体，P操作尝试将value 减去1，如果减去1后不小于0就返回0，表示成功。否则就会将线程阻塞，或者到了超时时间返回非0表示失败。V 操作尝试将value 加1，其实按对称的思路，看加1后会不会超value 的初始值就好了，不过好多博客都说的是看有没有阻塞的线程，有的话就把它释放了，或者说唤醒了，它就可以执行被保护的代码了，V操作返回非0，表示失败。如果没有阻塞的线程的话，就是返回0，表示它成功了。
+一个很普遍的用法是把它改造成了一个互斥锁。
+属性  ：dispatch_semaphore_t lock  = dispatch_semaphore_create(1);
+#define   Lock  dispatch_semaphore_wait(self.lock, forever);
+#define  UnLock dispatch_semaphore_signal(self.lock);
+
+
+dispatch_group_create
+
+
+
 
