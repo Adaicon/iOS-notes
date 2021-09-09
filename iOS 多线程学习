@@ -1,4 +1,3 @@
-iOS多线程学习
 引言 ｜ 学习过一遍GCD，但是平时基本不用，都差不多忘记了，再此拾起来，自己组织语言、加以学习后的理解记录了这篇文档。
 概念：
 - 1、进程/线程
@@ -19,6 +18,14 @@ iOS多线程学习
 iOS 实现一个多线程的例子 （线程管理）
 NSThread
 
+  NSThread *first = [[NSThread alloc] initWithTarget:self selector:@selector(run) object:nil];
+  [first setName:@"thread-1"];
+  [first start];
+  if ([[NSThread currentThread].name isEqualToString:@"thread-1"]) {
+      [NSThread sleepForTimeInterval:0.1];
+  }
+  [NSThread exit];
+  
 保护线程安全
 如果多个线程访问同一资源，不论如何进行线程交替执行，不需要我们去做任何同步的操作，都能得到我们设想的结果，才是线程安全的。
 竞争和原子操作、同步和锁、可重入、过度优化
@@ -81,12 +88,59 @@ NSLog(@"4");
 GCD的高级api：
 dispatch_barrier_sync  
 dispatch_barrier_async
+Barrier   翻译为栅栏，所谓栅栏可以说是挡板，比如任务A、B、C并发执行的时候，如果需要AB先并发执行完，再执行C, 就用栅栏把AB和C 遮挡住。
+- (void)barrier {
+    dispatch_queue_t queue = dispatch_queue_create("QueueName", DISPATCH_QUEUE_CONCURRENT);
+    dispatch_async(queue, ^{
+        for (int i=0; i<10; i++) {
+            NSLog(@"---%d", i);
+        }
+    });
+    dispatch_async(queue, ^{
+        for (int i=0; i<10; i++) {
+            NSLog(@"===%d", i);
+        }
+    });
+    dispatch_barrier_async(queue, ^{
+        for (int i=0; i<5; i++) {
+            NSLog(@"Barrier:%d", i);
+        }
+    });
+    dispatch_async(queue, ^{
+        NSLog(@"End of line");
+    });
+}
+ 输出：
 
+项目中的应用：处理缓存操作时，写缓存都是dispatch_async 到一个自定义的串行队列中，而清除缓存时是使用dispatch_barrier_async 将删除缓存数据放到该串行队列中，这样保证所有的写操作都写完后再清除，这样就不会发生执行完删除缓存后还会再写。
+https://juejin.cn/post/6844903647315230733
+dispatch_barrier_async 只能针对一个队列中的任务做barrier，而且这个队列应该是自己通过dispatch_queue_create函数创建的。如果你传的是全局并发队列，这个函数等同于dispatch_async。
+  dispatch_queue_t cQueue = dispatch_get_main_queue();//dispatch_queue_create("chuanqing", DISPATCH_QUEUE_SERIAL);
+  dispatch_async(cQueue, ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      NSLog(@"djq--------task1");
+    });
+  });
+  dispatch_async(cQueue, ^{
+    for(int i=0; i<10; i++) {
+      NSLog(@"djq====%d",i);
+    }
+  });
+  dispatch_barrier_async(cQueue, ^{
+    for (int i = 0; i<3; i++) {
+      NSLog(@"djq--barrier--%d",i);
+    }
+  });
+  dispatch_async(cQueue, ^{
+    NSLog(@"djqvev");
+  });
 
-
+这个时候task1 不会被拦在barrier 后执行的。
 dispatch_after
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 
-
+  });
+  
 dispatch_semaphore
 可以控制并发数量，创建的时候可以设置最大允许的并发线程数量
 dispatch_semaphore_t  semaphore = dispatch_semephore_create(value);
@@ -94,13 +148,25 @@ dispatch_semaphore_t  semaphore = dispatch_semephore_create(value);
 dispatch_semaphore_wait(semaphore, dispatch_time_t timeout);  （P操作）
 dispatch_semaphore_signal(semaphore);  (V操作)
 信号量是PV 操作的载体，P操作尝试将value 减去1，如果减去1后不小于0就返回0，表示成功。否则就会将线程阻塞，或者到了超时时间返回非0表示失败。V 操作尝试将value 加1，其实按对称的思路，看加1后会不会超value 的初始值就好了，不过好多博客都说的是看有没有阻塞的线程，有的话就把它释放了，或者说唤醒了，它就可以执行被保护的代码了，V操作返回非0，表示失败。如果没有阻塞的线程的话，就是返回0，表示它成功了。
-一个很普遍的用法是把它改造成了一个互斥锁。
+看项目中的应用，一个很普遍的用法是把它改造成了一个互斥锁。
 属性  ：dispatch_semaphore_t lock  = dispatch_semaphore_create(1);
 #define   Lock  dispatch_semaphore_wait(self.lock, forever);
 #define  UnLock dispatch_semaphore_signal(self.lock);
-
-
 dispatch_group_create
+dispatch_group_t group = dispatch_group_create();
+dispatch_group_enter(group);
+Doing tasks contains  dispatch_sync or  dispatch_async;
+dispatch_group_leave(group);// 可以拦住异步任务
+disoatch_group_notify(group,queue,block);
+如果任务不包含dispatch_sync or dispatch_async  则可以直接使用dispatch_group_async();
+dispatch_group 提供不局限于一个队列的barrier 
+
+
+
+
+1，明白这些线程安全的方法，包括互斥锁，自旋锁，无锁编程的适用的业务场景是什么？从OS和硬件角度说说原理是怎么样的？开销在哪里？
+2、能在现场借助cas操作，风险指针实现无锁的数据结构，比如无锁栈，无锁环形队列。无锁排序链表
+3. 了解常用的多线程设计范式，比如读写锁（Reader/Writer Lock，非常经典的范式，有偏向读和写的不同变形，至少被要求写过3次），生产消费范式（写过2次），一些常用容器的实现，比如BlockingQueue（写过3次）或者concurrentHashmap（写过2次）。如果是主Java的话可以看看JDK的实现。熟悉一下一些算不上多线程设计模式的小技巧，比如传递只读对象可以避免加锁，或者Copy传递以防外部修改之类的（讨论环节被问过）。另外值得特别一提的一个小细节是，Singleton的线程安全是个很有意思而且容易出错的话题，值得一看（只被问过一次，不过我答挂了，所以印象及其深）。还有可能会问的是一些有趣的小场景让你实现一些功能需要线程安全，无法特别准备，但是你能了解上面说的这些范式，不傻的话大多数都能想出来。
 
 
 
